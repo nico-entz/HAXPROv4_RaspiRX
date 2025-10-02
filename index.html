@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <title>Live WebP Vorschau + Telemetrie + Karte</title>
+  <style>
+    body {
+      background: #111;
+      color: #eee;
+      font-family: sans-serif;
+      margin: 0;
+      padding: 0;
+      overflow:hidden;
+    }
+    .top-container {
+      display: flex;
+      height: calc(100vh - 250px); /* Platz für textarea und etwas Puffer */
+    }
+
+    .image-box, .map-box {
+        height: 100%;
+        overflow: hidden;
+    }
+    img#preview {
+        height: 100%;
+        object-fit: contain;
+    }
+    #map {
+        height: 100%;
+    }
+
+    .image-box, .map-box {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 1em;
+      box-sizing: border-box;
+    }
+    .image-box {
+      justify-content: space-between;
+    }
+    img#preview {
+      width: 100%;
+      flex-grow: 1;
+      object-fit: contain;
+      border: 2px solid #eee;
+    }
+    .status {
+      margin-top: -2em;
+      font-size: 0.9em;
+      color: #ccc;
+      text-align: center;
+      user-select: none;
+    }
+    #map {
+      width: 100%;
+      flex-grow: 1;
+      border: 2px solid #eee;
+    }
+    textarea {
+      width: 98vw;
+      height: 200px;
+      background: #222;
+      color: #eee;
+      border: 2px solid #eee;
+      padding: 0.5em;
+      font-family: monospace;
+      resize: none;
+      margin: 1em;
+      margin-top:2em;
+      display: block;
+    }
+  </style>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</head>
+<body>
+
+<div class="top-container">
+  <div class="image-box">
+    <img id="preview" src="" alt="Vorschau wird geladen..." />
+    <p class="status" id="status">Suche neuestes Bild...</p>
+  </div>
+  <div class="map-box">
+    <div id="map"></div>
+  </div>
+</div>
+
+<textarea id="telemetry" readonly>Lade Telemetrie...</textarea>
+
+<script>
+  let currentIndex = 1;
+  let map, marker, polyline;
+
+  async function checkImage(url) {
+    try {
+      const resp = await fetch(url, { method: 'HEAD' });
+      return resp.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  async function findLatestImage() {
+    let lastValid = 0;
+    for (let i = currentIndex; i <= currentIndex + 10; i++) {
+      let url = `data/${i}.webp_preview.webp`;
+      if (await checkImage(url)) {
+        lastValid = i;
+      } else {
+        break;
+      }
+    }
+    return lastValid;
+  }
+
+  async function updateImage() {
+    const latest = await findLatestImage();
+    const img = document.getElementById('preview');
+    const status = document.getElementById('status');
+
+    if (latest > 0) {
+      currentIndex = latest;
+      img.src = `data/${latest}.webp_preview.webp?t=${Date.now()}`;
+      status.textContent = `Zeige Bild Nr. ${latest}`;
+    } else {
+      status.textContent = 'Noch kein Bild vorhanden.';
+      img.src = '';
+    }
+  }
+
+  function updateMapTrack(coords) {
+    if (!map) {
+      map = L.map('map').setView(coords[coords.length - 1], 15);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19
+      }).addTo(map);
+      marker = L.marker(coords[coords.length - 1]).addTo(map);
+      polyline = L.polyline(coords, { color: 'lime' }).addTo(map);
+    } else {
+      marker.setLatLng(coords[coords.length - 1]);
+      polyline.setLatLngs(coords);
+      map.setView(coords[coords.length - 1]);
+    }
+  }
+
+  async function updateTelemetry() {
+    const textarea = document.getElementById('telemetry');
+    try {
+      const resp = await fetch('data/telemetry.txt?t=' + Date.now());
+      if (!resp.ok) {
+        textarea.value = 'Keine Telemetriedaten gefunden.';
+        return;
+      }
+
+      const text = await resp.text();
+      textarea.value = text;
+      textarea.scrollTop = textarea.scrollHeight;
+
+      const lines = text.trim().split('\n');
+      const coords = [];
+
+      for (const line of lines) {
+        const parts = line.split(',');
+        const lat = parseFloat(parts[2]);
+        const lon = parseFloat(parts[3]);
+        if (!isNaN(lat) && !isNaN(lon)) {
+          coords.push([lat, lon]);
+        }
+      }
+
+      if (coords.length > 0) {
+        updateMapTrack(coords);
+      }
+    } catch {
+      textarea.value = 'Fehler beim Laden der Telemetriedaten.';
+    }
+  }
+
+  updateImage();
+  updateTelemetry();
+  setInterval(() => {
+    updateImage();
+    updateTelemetry();
+  }, 2000);
+</script>
+
+</body>
+</html>
